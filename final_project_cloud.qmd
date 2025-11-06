@@ -1,0 +1,122 @@
+---
+title: "Exploring Pancreatic Cancer Outcomes"
+subtitle: "BMIN5030 Final Project"
+author: "Cameron Cloud"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+---
+
+------------------------------------------------------------------------
+
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers. Feel free to change the theme and other display settings, although this is not required.
+
+[GITHUB LINK](https://github.com/cloudc1/BMIN5030_Final_Project)
+
+## Overview {#sec-overview}
+
+Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+The focus on project will be explore a data set from TCGA, specifically how pancreatic cancer outcomes (like treatment outcome, vital status) can be predicted by clinical factors that associate with tumor (tumor stage, treatment type, follow up time). The main question I would like to answer is related to predicting the disease stage OR disease follow up results (for example, without tumor vs with tumor). If I cannot make a good model to explain these, I think there will be other questions I can answer, like trying to model survival or treatment response.
+
+Two faculty: Dr. Zhou and Dr. Lee (CHOP Pathology Dept and CHOP Center for Computational Genomics), I have learned from Dr. Zhou about cancer biology, and with Dr. Lee's help, I have been able to focus on certain clinical factors to start thinking of what models to make.
+
+## Introduction {#sec-introduction}
+
+Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.
+
+The main problem: Pancreatic cancer an aggressive disease, with a five-year survival rate of 44% for local disease, and a 3% for distant disease ([source](https://www.cancer.org/cancer/types/pancreatic-cancer/detection-diagnosis-staging/survival-rates.html)). Identifying clinical factors to predict outcomes like disease stage, treatment response, and overall survival would be helpful to improve patient management. This project will aim to explore how clinical and demographic variables (like tumor stage, treatment type, and follow-up time) relate to pancreatic cancer outcomes. By building logistic or linear regression models, I hope to identify characteristics that may influence disease progression and response to therapy.\
+
+This problem is interdisciplinary, consisting of biology/oncology, statistics, and data science. Biology can provide the understanding tumor behavior and treatment effects. Statistics and data science enable interpretation and analysis of large clinical datasets like TCGA. By combining perspectives, this project contributes to a greater understanding of pancreatic cancer prognosis and potential paths toward improving patient outcomes.
+
+## Methods {#sec-methods}
+
+Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+
+Packages needed:
+
+```{r}
+library(readr)
+library(dplyr)
+```
+
+Loading and cleaning data (can clean more later when know all the variables needed for the project)
+
+```{r}
+#main clinical data
+data <- read_tsv("clinical.project-tcga-paad.2025-10-01/clinical.tsv")
+
+dim(data)
+#[1] 1082  210
+
+# NOTE: '-- means NA, so converting all those to NA
+data[data == "'--"] <- NA
+
+# Get the number of NAs per column
+na_counts <- colSums(is.na(data))
+na_counts
+
+#Columns I can focus on -- based on having sufficient data (1082 samples, will get rid of cols if 1000 + NA values)
+data <- data[, na_counts < 1000]
+dim(data)
+#[1] 1082   60
+
+# same thing with follow up info
+followup <- read_tsv("clinical.project-tcga-paad.2025-10-01/follow_up.tsv")
+followup[followup == "'--"] <- NA
+na_counts <- colSums(is.na(followup))
+followup <- followup[, na_counts < nrow(followup)/2]
+
+### Other data I might do some analyses with:
+#exposure <- read_tsv("clinical.project-tcga-paad.2025-10-01/exposure.tsv")
+#family <- read_tsv("clinical.project-tcga-paad.2025-10-01/family_history.tsv")
+#pathology <- read_tsv("clinical.project-tcga-paad.2025-10-01/pathology_detail.tsv")
+```
+
+Numbers for the analyses:
+
+```{r}
+
+##exclude Subsequent Primary
+table(data$diagnoses.classification_of_tumor)
+        # metastasis            primary      Prior primary         recurrence Subsequent Primary 
+        #        237                690                 69                 75                 11 
+
+
+table(data$demographic.vital_status)
+# Alive  Dead 
+#   473   609 
+  
+data <- data |>
+  mutate(
+    diagnoses.age_at_diagnosis = as.numeric(diagnoses.age_at_diagnosis) / 325.25
+  )
+
+# if do subtype analysis, focus on Adenocarcinomas and Ductual
+table(data$cases.disease_type)
+         # Adenomas and Adenocarcinomas Cystic, Mucinous and Serous Neoplasms          Ductal and Lobular Neoplasms 
+         #                          178                                    15                                   886 
+         #    Epithelial Neoplasms, NOS 
+         #                            3 
+
+table(followup$follow_ups.disease_response)
+# TF-Tumor Free       Unknown WT-With Tumor 
+#           150            74           234 
+```
+
+Logistic regression
+
+Question: Can patient variables X,Y, and or Z predict whether a cancer is at an advanced stage? Or maybe tumor free follow up vs still have tumor at follow up
+
+```{r}
+
+```
+
+## Results {#sec-results}
+
+Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+## Conclusion
+
+This the conclusion. The @sec-results can be invoked here.
