@@ -26,7 +26,7 @@ Two faculty: Dr. Zhou and Dr. Lee (CHOP Pathology Dept and CHOP Center for Compu
 
 Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.
 
-The main problem: Pancreatic cancer an aggressive disease, with a five-year survival rate of 44% for local disease, and a 3% for distant disease ([source](https://www.cancer.org/cancer/types/pancreatic-cancer/detection-diagnosis-staging/survival-rates.html)). Identifying clinical factors to predict outcomes like disease stage, treatment response, and overall survival would be helpful to improve patient management. This project will aim to explore how clinical and demographic variables (like tumor stage, treatment type, and follow-up time) relate to pancreatic cancer outcomes. By building logistic or linear regression models, I hope to identify characteristics that may influence disease progression and response to therapy.\
+The main problem: Pancreatic cancer an aggressive disease, with a five-year survival rate of 44% for local disease, and a 3% for distant disease ([source](https://www.cancer.org/cancer/types/pancreatic-cancer/detection-diagnosis-staging/survival-rates.html)). Identifying clinical factors to predict outcomes like disease stage, treatment response, and overall survival would be helpful to improve patient management. This project will aim to explore how clinical and demographic variables (like tumor stage, treatment type, and follow-up time) relate to pancreatic cancer outcomes. By building logistic or linear regression models, I hope to identify characteristics that may influence disease progression and response to therapy.
 
 This problem is interdisciplinary, consisting of biology/oncology, statistics, and data science. Biology can provide the understanding tumor behavior and treatment effects. Statistics and data science enable interpretation and analysis of large clinical datasets like TCGA. By combining perspectives, this project contributes to a greater understanding of pancreatic cancer prognosis and potential paths toward improving patient outcomes.
 
@@ -37,16 +37,20 @@ Describe the data used and general methodological approach used to address the p
 Packages needed:
 
 ```{r}
-library(readr)
-library(dplyr)
+#library(readr)
+library(tidyverse)
+library(tidymodels)
+library(broom) 
+library(modelsummary)
 ```
 
-Loading and cleaning data (can clean more later when know all the variables needed for the project)
+Loading and cleaning data (can clean more later when know all the variables needed for the project):
+
+will delete most of this later
 
 ```{r}
 #main clinical data
 data <- read_tsv("clinical.project-tcga-paad.2025-10-01/clinical.tsv")
-
 dim(data)
 #[1] 1082  210
 
@@ -68,15 +72,64 @@ followup[followup == "'--"] <- NA
 na_counts <- colSums(is.na(followup))
 followup <- followup[, na_counts < nrow(followup)/2]
 
+#Two variables im intereted in: ​follow_ups.days_to_follow_up, ²​follow_ups.disease_response
+
 ### Other data I might do some analyses with:
-#exposure <- read_tsv("clinical.project-tcga-paad.2025-10-01/exposure.tsv")
-#family <- read_tsv("clinical.project-tcga-paad.2025-10-01/family_history.tsv")
-#pathology <- read_tsv("clinical.project-tcga-paad.2025-10-01/pathology_detail.tsv")
+exposure <- read_tsv("clinical.project-tcga-paad.2025-10-01/exposure.tsv")
+exposure[exposure == "'--"] <- NA
+na_counts <- colSums(is.na(exposure))
+exposure <- exposure[, na_counts < nrow(exposure)/2]
+
+## exposures.tobacco_smoking_status
+# family <- read_tsv("clinical.project-tcga-paad.2025-10-01/family_history.tsv")
+# family[family == "'--"] <- NA
+# na_counts <- colSums(is.na(family))
+# family <- family[, na_counts < nrow(family)/2]
+# pathology <- read_tsv("clinical.project-tcga-paad.2025-10-01/pathology_detail.tsv")
+# pathology[pathology == "'--"] <- NA
+# na_counts <- colSums(is.na(pathology))
+# pathology <- pathology[, na_counts < nrow(pathology)/2]
+
+
+
 ```
 
-Numbers for the analyses:
+Data frame with everything merged (had a many to many warning because of multiple followups and multiple of the same patients in the cliniical data sheet)
 
 ```{r}
+# most recent follow up
+length(unique(data$cases.case_id)) == nrow(data)
+
+#we will focus on primary tumors, then just select the top row (multiple rows per patient to describe the different treatments)
+data1 <- data |> filter(diagnoses.classification_of_tumor == "primary") |> 
+  group_by(cases.case_id) |>
+  slice(1) |>
+  ungroup()
+
+exposure1 <- exposure |>
+  filter(exposures.tobacco_smoking_status != "Unknown") |>  # remove Unknown patients
+  mutate(
+    smoker = ifelse(
+      exposures.tobacco_smoking_status == "Lifelong Non-Smoker",
+      0,   # non-smoker
+      1    # all smokers / reformed smokers
+    )
+  )
+
+length(unique(exposure1$cases.case_id)) == nrow(exposure1)
+
+followup1 <- followup %>%
+  group_by(cases.case_id) %>%
+  filter(follow_ups.days_to_follow_up == max(follow_ups.days_to_follow_up, na.rm = TRUE)) |>
+  
+
+
+df <- data1 %>%
+  left_join(exposure1, by = c("project.project_id", "cases.case_id", "cases.submitter_id")) 
+
+#%>%
+#  left_join(followup, by = c("project.project_id", "cases.case_id", "cases.submitter_id"))
+
 
 ##exclude Subsequent Primary
 table(data$diagnoses.classification_of_tumor)
@@ -103,19 +156,198 @@ table(data$cases.disease_type)
 table(followup$follow_ups.disease_response)
 # TF-Tumor Free       Unknown WT-With Tumor 
 #           150            74           234 
+
+
 ```
 
-Logistic regression
+## Part I: Logistic regression: Predicting Survival Status in patients with a primary diagnosis
 
 Question: Can patient variables X,Y, and or Z predict whether a cancer is at an advanced stage? Or maybe tumor free follow up vs still have tumor at follow up
 
+Not sure how to filter to make sure patients didn't recieve treatment yet
+
+Race mostly white, wont add into model
+
 ```{r}
+# will pull out potential useful predictors for survivial (made sure all had suffieicnet sample sizes within each variable)
+# df_log <- data1 |>
+#   left_join(exposure1, by = c("project.project_id", "cases.case_id", "cases.submitter_id")) |>
+#   select(cases.disease_type,demographic.age_at_index,demographic.gender, diagnoses.ajcc_pathologic_stage, diagnoses.tumor_grade,demographic.vital_status) |>
+#     mutate(
+#     stage_simple = case_when(
+#       diagnoses.ajcc_pathologic_stage %in% c("Stage I", "Stage IA", "Stage IB") ~ "I",
+#       diagnoses.ajcc_pathologic_stage %in% c("Stage II", "Stage IIA", "Stage IIB") ~ "II",
+#       diagnoses.ajcc_pathologic_stage %in% c("Stage III") ~ "III",
+#       diagnoses.ajcc_pathologic_stage %in% c("Stage IV") ~ "IV",
+#       TRUE ~ NA_character_
+#     )
+#   )
+
+vars <- c(
+  "demographic.age_at_index",
+  "demographic.gender",
+  "demographic.race",
+  "demographic.ethnicity",
+  "demographic.vital_status",
+  "diagnoses.primary_diagnosis",
+  "diagnoses.tumor_grade",
+  "diagnoses.ajcc_pathologic_stage",
+  "diagnoses.ajcc_pathologic_t",
+  "diagnoses.ajcc_pathologic_n",
+  "diagnoses.ajcc_pathologic_m",
+  "diagnoses.year_of_diagnosis",
+  "smoker"
+)
+
+data_model <- df |>
+  select(any_of(vars)) |>
+  mutate(
+    vital_binary = ifelse(demographic.vital_status == "Dead", 1, 0),
+    across(where(is.character), ~na_if(., "")),
+    demographic.gender = as.factor(demographic.gender),
+    diagnoses.ajcc_pathologic_stage = as.factor(diagnoses.ajcc_pathologic_stage)
+  ) |>
+  drop_na(vital_binary)
+
+data_model <- data_model %>%
+  mutate(
+    stage_raw = as.factor(gsub("Stage ", "", diagnoses.ajcc_pathologic_stage)),
+    stage_simple = as.factor(sub("^([IVX]+).*", "\\1", stage_raw)),# "I", "II", "III", "IV"
+    grade_simple = case_when(
+      diagnoses.tumor_grade %in% c("G1", "Grade 1") ~ "1",
+      diagnoses.tumor_grade %in% c("G2", "Grade 2") ~ "2",
+      diagnoses.tumor_grade %in% c("G3", "Grade 3") ~ "3",
+      diagnoses.tumor_grade %in% c("G4", "Grade 4") ~ "4",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Age distribution
+hist(data_model$demographic.age_at_index, main="Age distribution",xlab="Age at index")
+
+# Plot of Stage
+ggplot(data_model, aes(x = stage_simple)) +
+  geom_bar(fill = "darkblue") +
+  theme_minimal() +
+  labs(title = "Counts of Stage (Collapsed)", x = "Stage", y = "Count")
+
+# Tumor grade
+ggplot(data_model, aes(x = grade_simple)) +
+  geom_bar(fill = "darkorange") +
+  theme_minimal() +
+  labs(title = "Counts of Tumor Grade", x = "Grade Group", y = "Count")
+
+# Gender
+ggplot(data_model, aes(x = demographic.gender)) +
+  geom_bar(fill = "darkgreen") +
+  theme_minimal() +
+  labs(title = "Counts of Gender", x = "Gender", y = "Count")
+
+# Ever smoked
+ggplot(data_model, aes(x = smoker)) +
+  geom_bar(fill = "darkred") +
+  theme_minimal() +
+  labs(title = "Counts of Smoker Status", x = "Smoke (Y/N)", y = "Count")
+
+###I combined smaller categories into larger groups to increase sample sizes for the categoried in the model and improve the stability of the model estimates
+
+data_model$stage_collapsed <- case_when(
+  data_model$stage_simple %in% c("III", "IV") ~ "III_IV",
+  data_model$stage_simple == "I"  ~ "I",
+  data_model$stage_simple == "II" ~ "II",
+  TRUE ~ NA_character_
+)
+
+data_model$stage_collapsed <- factor(
+  data_model$stage_collapsed,
+  levels = c("I", "II", "III_IV")
+)
+
+data_model$grade_group <- case_when(
+  data_model$grade_simple %in% c("1", "2") ~ "low",
+  data_model$grade_simple %in% c("3", "4") ~ "high",
+  TRUE ~ NA_character_
+)
+
+data_model$grade_group <- factor(data_model$grade_group, levels = c("low","high"))
+
+ggplot(data_model, aes(x = stage_collapsed)) +
+  geom_bar(fill = "darkblue") +
+  theme_minimal() +
+  labs(title = "Counts of Stage (Collapsed)", x = "Stage", y = "Count")
+
+ggplot(data_model, aes(x = grade_group)) +
+  geom_bar(fill = "darkorange") +
+  theme_minimal() +
+  labs(title = "Counts of Tumor Grade", x = "Grade Group", y = "Count")
+
+
+# regression 
+lr_cls_spec <- logistic_reg() |> 
+  set_engine("glm")
+
+# NOTE: earlier I tried grade_group as the original grades, and it wasn't significant. when i make into "low" and "high" it is significant now
+lr_cls_fit <- lr_cls_spec |>
+  fit(
+    as.factor(vital_binary) ~ demographic.age_at_index + demographic.gender + stage_collapsed + grade_group + smoker,
+    data = data_model
+  )
+
+lr_cls_fit_clean <- tidy(lr_cls_fit)
+lr_cls_fit_clean
+
+lr_cls_fit_sig <- lr_cls_fit_clean |> filter(p.value < 0.05) 
+lr_cls_fit_sig 
+
+exp(cbind(OR = coef(lr_cls_fit), CI = confint(lr_cls_fit)))
+
+
+
+# age significance interesting to me, maybe in univariate model?: close to significant, maybe age matterns but partially explained by stage ?  --> wasn't significant in univariate
+summary((glm(vital_binary ~ as.numeric(demographic.age_at_index), data = data_model, family = binomial())))
+
+
+
+```
+
+### 
+
+## Part II: 
+
+```{r}
+###Follow up dataframe, need to combine
+df2 <- data1 |> 
+followup1 |> 
+
 
 ```
 
 ## Results {#sec-results}
 
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. You may refer to the @sec-methods as needed. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+Part I:
+
+```{r}
+lr_cls_or_vital_status <- lr_cls_fit_clean %>%
+  mutate(
+    OR = exp(estimate),                           # odds ratio
+    CI_lower = exp(estimate - 1.96 * std.error),  # lower 95% CI
+    CI_upper = exp(estimate + 1.96 * std.error)   # upper 95% CI
+  )
+```
+
+### Takeaways:
+
+Stage II and high grade are predictive of mortality. Each additional year of age increases the odds of death by \~3% and high-grade tumors have \~2.3 times higher odds of death than low-grade tumors.
+
+Stage III/IV has odds of death \~4.9 times higher than stage I, but CI is very wide and crosses 1, so not statistically significant, likely due to small number of stage III/IV patients.
+
+Age has a small positive effect. Each additional year of age increases the odds of death by \~3%, but not statistically significant at alpha = 0.05.
+
+Gender and smoker are not contributing.
+
+Part II:
 
 ## Conclusion
 
